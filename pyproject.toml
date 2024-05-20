@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "up-pypmt"
+version = "0.1.0"
+description = "A unified planning interface for pyPMT."
+authors = ["Mustafa Faisal <mustafa.faisal.eng@gmail.com>", "Joan Espasa Arxer <jea20@st-andrews.ac.uk>", "Francesco Leofante <f.leofante@imperial.ac.uk>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pypmt = {git = "https://github.com/pyPMT/pyPMT.git"}
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
