@@ -1,7 +1,9 @@
 from typing import Callable, IO, Optional
 import unified_planning as up
+from unified_planning.engines.results import CompilerResult
+from unified_planning.engines import PlanGenerationResultStatus, PlanGenerationResult
 
-from pypmt.apis import valid_configs, generate_schedule_for
+from pypmt.apis import valid_configs, generate_schedule_for, compile, initialize_fluents
 
 # We have to args: linear, upper_bound
 class SMTPlanner(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
@@ -21,14 +23,19 @@ class SMTPlanner(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             assert self.search_strategy is not None, "Search strategy is not defined."
 
             # Check if this is a valid configuration.
-            for (_encoder, _search) in valid_configs.values():
+            for (_encoder, _search, _compilationlist) in valid_configs.values():
                 if _encoder == self.encoder and _search == self.search_strategy:
-                    self.configuration = (_encoder, _search)
+                    self.configuration = (_encoder, _search, _compilationlist)
                     break
         else:
             self.configuration = valid_configs[self.configuration]
         
         assert self.configuration is not None, "Invalid configuration pass."
+
+        # override the compilationlist if it is passed in the options
+        compilationlist = options.get('compilationlist', None)
+        if compilationlist is not None:
+            self.configuration = (self.configuration[0], self.configuration[1], compilationlist)
 
         # Construct the shcedule.
         self.upper_bound = options.get('upper-bound', None)
@@ -77,14 +84,26 @@ class SMTPlanner(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
               callback: Optional[Callable[['up.engines.PlanGenerationResult'], None]] = None,
               timeout: Optional[float] = None,
               output_stream: Optional[IO[str]] = None) -> 'up.engines.PlanGenerationResult':
-        
-        encoder_instance = self.configuration[0](problem)
+    
+        # 1. initialise the fluents
+        initialize_fluents(problem)
+        # 2. compile the problem
+        compiled_tasks = compile(problem, self.configuration[2])
+        arg_task = compiled_tasks[-1].problem if isinstance(compiled_tasks[-1], CompilerResult) else compiled_tasks[-1]
+        # 3. create the encoder instance
+        encoder_instance = self.configuration[0](arg_task)
         search_strategy  = self.configuration[1]
+        # 4. search for the plan
         plan = search_strategy(encoder_instance, self.schedule, run_validation=self.run_validation).search()
-        
+        # 5. return the result
         if not plan.validate():
-            return up.engines.PlanGenerationResult(up.engines.PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY, None, self.name, log_messages=[f'failure reason {plan.validation_fail_reason}'])
-        return up.engines.PlanGenerationResult(up.engines.PlanGenerationResultStatus.SOLVED_SATISFICING, plan.plan, self.name)
+            return PlanGenerationResult(PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY, None, self.name, log_messages=[f'failure reason {plan.validation_fail_reason}'])
+        # 6. lift the plan
+        up_seq_plan = plan.plan
+        for compilation_r in reversed(compiled_tasks[1:]):
+            up_seq_plan = up_seq_plan.replace_action_instances(compilation_r.map_back_action_instance)
+        plan.plan = up_seq_plan
+        return PlanGenerationResult(PlanGenerationResultStatus.SOLVED_SATISFICING, plan.plan, self.name)
 
     def destroy(self):
         pass
