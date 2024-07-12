@@ -88,10 +88,9 @@ class SMTPlanner(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         # 1. initialise the fluents
         initialize_fluents(problem)
         # 2. compile the problem
-        compiled_tasks = compile(problem, self.configuration[2])
-        arg_task = compiled_tasks[-1].problem if isinstance(compiled_tasks[-1], CompilerResult) else compiled_tasks[-1]
+        compiled_task = compile(problem, self.configuration[2])
         # 3. create the encoder instance
-        encoder_instance = self.configuration[0](arg_task)
+        encoder_instance = self.configuration[0](compiled_task.problem)
         search_strategy  = self.configuration[1]
         # 4. search for the plan
         plan = search_strategy(encoder_instance, self.schedule, run_validation=self.run_validation).search()
@@ -99,10 +98,7 @@ class SMTPlanner(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         if not plan.validate():
             return PlanGenerationResult(PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY, None, self.name, log_messages=[f'failure reason {plan.validation_fail_reason}'])
         # 6. lift the plan
-        up_seq_plan = plan.plan
-        for compilation_r in reversed(compiled_tasks[1:]):
-            up_seq_plan = up_seq_plan.replace_action_instances(compilation_r.map_back_action_instance)
-        plan.plan = up_seq_plan
+        plan.plan = plan.plan.replace_action_instances(compiled_task.map_back_action_instance)
         return PlanGenerationResult(PlanGenerationResultStatus.SOLVED_SATISFICING, plan.plan, self.name)
 
     def destroy(self):
