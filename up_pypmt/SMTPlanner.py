@@ -2,8 +2,12 @@ from typing import Callable, IO, Optional
 import unified_planning as up
 from unified_planning.engines.results import CompilerResult
 from unified_planning.engines import PlanGenerationResultStatus, PlanGenerationResult
+from pypmt.config import Config
+from pypmt.pypmtcli import process_arguments
+import argparse
+from pypmt.apis import solveUP
 
-from pypmt.apis import valid_configs, generate_schedule_for, compile, initialize_fluents
+
 
 # We have to args: linear, upper_bound
 class SMTPlanner(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
@@ -11,38 +15,8 @@ class SMTPlanner(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         # Read known user-options and store them for using in the `solve` method
         up.engines.Engine.__init__(self)
         up.engines.mixins.OneshotPlannerMixin.__init__(self)
-
-        # Get the planner configuration.
-        self.configuration = options.get('configuration', None)
-        if self.configuration is None:
-            # This means that we need to check the validity of the configuration.
-            self.encoder  = eval(options.get('encoder', 'None'))
-            self.search_strategy = eval(options.get('search-strategy', 'None'))
-
-            assert self.encoder is not None, "Encoder is not defined."
-            assert self.search_strategy is not None, "Search strategy is not defined."
-
-            # Check if this is a valid configuration.
-            for (_encoder, _search, _compilationlist) in valid_configs.values():
-                if _encoder == self.encoder and _search == self.search_strategy:
-                    self.configuration = (_encoder, _search, _compilationlist)
-                    break
-        else:
-            self.configuration = valid_configs[self.configuration]
-        
-        assert self.configuration is not None, "Invalid configuration pass."
-
-        # override the compilationlist if it is passed in the options
-        compilationlist = options.get('compilationlist', None)
-        if compilationlist is not None:
-            self.configuration = (self.configuration[0], self.configuration[1], compilationlist)
-
-        # Construct the shcedule.
-        self.upper_bound = options.get('upper-bound', None)
-        assert self.upper_bound is not None, "Upper bound is not defined."
-        
-        self.schedule = generate_schedule_for(self.configuration[0], self.upper_bound)
-        self.run_validation = options.get('run-validation', False)
+        assert "configuration" in options, "Configuration is not defined."
+        self.conf = Config(options["configuration"])
 
     @property
     def name(self) -> str:
@@ -84,21 +58,9 @@ class SMTPlanner(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
               callback: Optional[Callable[['up.engines.PlanGenerationResult'], None]] = None,
               timeout: Optional[float] = None,
               output_stream: Optional[IO[str]] = None) -> 'up.engines.PlanGenerationResult':
-    
-        # 1. initialise the fluents
-        initialize_fluents(problem)
-        # 2. compile the problem
-        compiled_task = compile(problem, self.configuration[2])
-        # 3. create the encoder instance
-        encoder_instance = self.configuration[0](compiled_task.problem)
-        search_strategy  = self.configuration[1]
-        # 4. search for the plan
-        plan = search_strategy(encoder_instance, self.schedule, run_validation=self.run_validation).search()
-        # 5. return the result
-        if not plan.validate():
+        plan = solveUP(problem, self.conf)
+        if plan is None or not plan.validate():
             return PlanGenerationResult(PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY, None, self.name, log_messages=[f'failure reason {plan.validation_fail_reason}'])
-        # 6. lift the plan
-        plan.plan = plan.plan.replace_action_instances(compiled_task.map_back_action_instance)
         return PlanGenerationResult(PlanGenerationResultStatus.SOLVED_SATISFICING, plan.plan, self.name)
 
     def destroy(self):
